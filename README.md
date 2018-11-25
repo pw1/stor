@@ -1,2 +1,2 @@
-# stor
-Very simple interface to various storage backends.
+# Stor
+A very simple interface to various storage backends.
