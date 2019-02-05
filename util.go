@@ -36,15 +36,14 @@ func CleanPath(filePath string) (string, error) {
 	// Check for any forbidden combinations
 	for _, forbid := range Forbidden {
 		if strings.Contains(filePath, forbid) {
-			msg := fmt.Sprintf("Path contains forbidden combination %s", forbid)
-			return "", NewInvalidPathError(msg)
+			msg := fmt.Sprintf("path contains forbidden combination %s", forbid)
+			return "", &InvalidPathError{filePath, msg}
 		}
 	}
 
 	// Make sure that the path doesn't start with a /
 	if path.IsAbs(filePath) {
-		msg := fmt.Sprintf("Absolute path %s", filePath)
-		return "", NewInvalidPathError(msg)
+		return "", &InvalidPathError{filePath, "path must be relative"}
 	}
 
 	// Check for any forbidden characters
@@ -52,9 +51,9 @@ func CleanPath(filePath string) (string, error) {
 		char := filePath[i]
 		_, ok := validCharDict[char]
 		if !ok {
-			msg := fmt.Sprintf("%s contains forbidden byte 0x%x (%s) at index %d", filePath,
+			msg := fmt.Sprintf("contains forbidden byte 0x%x (%s) at index %d",
 				char, string(char), i)
-			return "", NewInvalidPathError(msg)
+			return "", &InvalidPathError{filePath, msg}
 		}
 	}
 

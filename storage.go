@@ -1,16 +1,18 @@
 package stor
 
 import (
-	"errors"
 	"fmt"
-	"strings"
 )
 
-// Storage defines a simple interface for accessing different kinds of storage.
-// The storage interface is for loading and saving blobs of data. The data is accessed via a
-// hierarichal path. The directories within the path are separated by the slash '/' (even on Windows
-// platforms).
-type Storage interface {
+// Metaer (Meta-er) can retrieve meta information about a file.
+type Metaer interface {
+	// Meta returns meta information about a file.
+	// If the file does not exist, then a PathDoesntExistError is returned.
+	Meta(path string) (*Meta, error)
+}
+
+// Lister can list files in Storage in a directory.
+type Lister interface {
 	// List all entries within a directory.
 	// The path argument is a slash-separated path.
 	// Returns three values. The first return value is a list of files within the directory. The
@@ -19,135 +21,228 @@ type Storage interface {
 	// necessarily sorted. The returned file and subdirectory entries are always full paths (with
 	// respect to the storage root).
 	List(path string) ([]string, []string, error)
+}
 
-	// Check if a file exists.
-	// The path argument is a slash-separated path.
-	Exist(path string) (bool, error)
-
+// Loader can load files in Storage.
+type Loader interface {
 	// Load a file and return its content.
 	// The path argument is a slash-separated path.
 	// The maxSize gives the maximum accepted file size. If the file is larger, then an error is
 	// returned and no data.
 	Load(path string, maxSize int64) ([]byte, error)
+}
 
+// Saver can save files in Storage.
+type Saver interface {
 	// Save data to a file.
 	// The path argument is a slash-separated path.
 	Save(path string, data []byte) error
+}
 
+// Deleter can delete files from Storage.
+type Deleter interface {
 	// Delete a file.
 	// The path argument is a slash-separated path.
 	Delete(path string) error
-
-	// Return the StorageType of this storega object.
-	Type() Type
 }
 
-// Type defines the type of Storage. Each type of storage has its own type ID. The Type has a
-// numerical and a textual representation.
-type Type int64
+// Reader can perform all read operations in Storage.
+type Reader interface {
+	Metaer
+	Lister
+	Loader
+}
+
+// Writer can perform all write operations in Storage.
+type Writer interface {
+	Saver
+	Deleter
+}
+
+// Storage defines a simple, limited interface for accessing different kinds of storage.
+// The storage interface is for loading and saving blobs of data. The data is accessed via a
+// hierarichal path. The directories within the path are separated by the slash '/' (even on Windows
+// platforms).
+type Storage interface {
+	Reader
+	Writer
+}
+
+// Meta contains meta information about a file.
+type Meta struct {
+	// Size (in bytes) of the file. This value is set to SizeUnknown if the Size can't be retrieved.
+	Size int64
+}
 
 const (
-	// UndefinedStorageType is the numerical representation of a storage.Type that is undefined.
-	UndefinedStorageType Type = 0
+	// SizeUnknown indicates that the size of a file is unknown.
+	SizeUnknown = -1
+)
 
-	// UndefinedStorageTypeText is the textual representation of a storage.Type that is undefined.
-	UndefinedStorageTypeText string = "Undefined"
+// Factory is a function that creates a new Storage object based on a configuration.
+type Factory func(conf *Conf) (Storage, error)
 
-	// MockStorageType is the storage.Type for the StorageMock.
-	MockStorageType Type = 69844752684693179
+// Type defines the type of Storage.
+type Type string
 
-	// MockStorageTypeText is the textual representation of the storage.Type of StorageMock.
-	MockStorageTypeText string = "Mock"
+const (
+	// MaxTypeLen is the maximum length that a Type can have.
+	MaxTypeLen = 20
+
+	// TypeUnspecified indicates that the storage.Type is not specified.
+	TypeUnspecified Type = ""
 )
 
 var (
-	// Defines the mapping between StorageTypes and their textual representations.
-	registeredStorageTypes = make(map[string]Type)
+	// typeFactoryMap contains the mapping between Types and their Factory functions.
+	typeFactoryMap = make(map[Type]Factory)
 )
 
-func init() {
-	RegisterStorageType(UndefinedStorageType, UndefinedStorageTypeText)
-	RegisterStorageType(MockStorageType, MockStorageTypeText)
-}
-
-// RegisterStorageType registers a new storage.Type. You need to register a new storage type before
-// it can be unmarshalled from text or formatted as string.
-func RegisterStorageType(storageType Type, stringRepresentation string) error {
-	// Make sure that int and text represenations are not already registered.
-	for key, value := range registeredStorageTypes {
-		if stringRepresentation == key {
-			return fmt.Errorf("%s is already registered", stringRepresentation)
-		}
-		if int(value) == int(storageType) {
-			return fmt.Errorf("%d is already registered (with %s)", storageType, value)
-		}
+// RegisterType registers a new storage.Type and its associated Factory function.
+// If the Type is already registered, or if the Type is invalid, then this function will panic.
+// This function is intended to be called from the init function of packages that implement the
+// Storage interface.
+func RegisterType(storageType Type, factory Factory) {
+	if len(storageType) > MaxTypeLen {
+		panic(fmt.Sprintf("stor: name of Type %s is too long", storageType))
 	}
 
-	registeredStorageTypes[stringRepresentation] = storageType
-	return nil
+	if storageType == TypeUnspecified {
+		panic("stor: undefined Type")
+	}
+
+	if _, ok := typeFactoryMap[storageType]; ok {
+		panic(fmt.Sprintf("stor: Type %s is already registered", storageType))
+	}
+
+	typeFactoryMap[storageType] = factory
 }
 
-// UnmarshalText parses a textual representation of a storage.Type and sets this object to that
-// value.
-func (s *Type) UnmarshalText(text []byte) error {
-	typ, ok := registeredStorageTypes[string(text)]
+// New creates a new Storage object based on conf. It will read the Type from the conf and get the
+// Factory function registered for that type. It will then call that Factory with conf and return
+// the result.
+func New(conf *Conf) (Storage, error) {
+	if conf.Type == TypeUnspecified {
+		return nil, &UnspecifiedTypeError{}
+	}
+
+	factory, ok := typeFactoryMap[conf.Type]
 	if !ok {
-		msg := fmt.Sprintf("Invalid StorageType: %s (valid types are:", text)
-		for typeName := range registeredStorageTypes {
-			msg += fmt.Sprintf(" %s", typeName)
-		}
-		msg += ")."
-		return errors.New(msg)
+		return nil, &UnregisteredTypeError{conf.Type}
 	}
 
-	*s = typ
-	return nil
-}
-
-func (s Type) String() string {
-	for typeName, typ := range registeredStorageTypes {
-		if s == typ {
-			return typeName
-		}
-	}
-	return fmt.Sprintf("INVALID TYPE: %d", s)
+	return factory(conf)
 }
 
 // Conf contains the configuration for the storege objects.
 type Conf struct {
-	StorageType Type
-	Path        string
+	Type Type
+	Path string
 }
 
-// NewConf creates a new empty configuration, with default values.
-func NewConf() *Conf {
-	return &Conf{
-		StorageType: UndefinedStorageType,
-		Path:        "",
+// UnregisteredTypeError is returned when a storage Type is specified but has never been registered.
+type UnregisteredTypeError struct {
+	Type Type
+}
+
+func (e *UnregisteredTypeError) Error() string {
+	return fmt.Sprintf("storage type %s is not registered", e.Type)
+}
+
+// IsUnregisteredTypeError returns true if an error is a UnspecifiedTypeError. Returns false
+// otherwise.
+func IsUnregisteredTypeError(err error) bool {
+	switch err.(type) {
+	case *UnregisteredTypeError:
+		return true
+	default:
+		return false
 	}
 }
 
 // InvalidPathError indicates that a path is invalid.
 type InvalidPathError struct {
-	msg string
+	Path string
+	Msg  string
 }
 
-// NewInvalidPathError generates a new InvalidPathError
-func NewInvalidPathError(msg string) error {
-	err := &InvalidPathError{
-		msg: msg,
+func (e *InvalidPathError) Error() string {
+	msg := fmt.Sprintf("path %s is invalid", e.Path)
+	if e.Msg != "" {
+		msg += ": " + e.Msg
 	}
-	return err
+	return msg
 }
 
 // IsInvalidPathError checks whether an error is an InvalidPathError, or not.
 func IsInvalidPathError(err error) bool {
-	if err == nil {
+	switch err.(type) {
+	case *InvalidPathError:
+		return true
+	default:
 		return false
 	}
-	return strings.HasPrefix(err.Error(), "InvalidPathError:")
 }
 
-func (e *InvalidPathError) Error() string {
-	return fmt.Sprintf("InvalidPathError: %s", e.msg)
+// PathDoesntExistError indicates that a specified path doesn't exist.
+type PathDoesntExistError struct {
+	// Path is the path that doesn't exist.
+	Path string
+}
+
+func (f *PathDoesntExistError) Error() string {
+	return fmt.Sprintf("path %s does not exist", f.Path)
+}
+
+// IsPathDoesntExistError returns true if an error is a PathDoesntExistError. Returns false
+// otherwise.
+func IsPathDoesntExistError(err error) bool {
+	switch err.(type) {
+	case *PathDoesntExistError:
+		return true
+	default:
+		return false
+	}
+}
+
+// TooLargeError indicates that a file is too large, or a list is too long.
+type TooLargeError struct {
+	// What indicates what is too large. E.g. a file or a list.
+	What string
+}
+
+func (e *TooLargeError) Error() string {
+	msg := "too large"
+	if e.What != "" {
+		msg = e.What + " is " + msg
+	}
+	return msg
+}
+
+// IsTooLargeError returns true if an error is a TooLargeError. Returns false otherwise.
+func IsTooLargeError(err error) bool {
+	switch err.(type) {
+	case *TooLargeError:
+		return true
+	default:
+		return false
+	}
+}
+
+// UnspecifiedTypeError is returned when trying to create Storage but Type is not specified.
+type UnspecifiedTypeError struct{}
+
+func (e *UnspecifiedTypeError) Error() string {
+	return "storage Type is not specified"
+}
+
+// IsUnspecifiedTypeError returns true if an error is a UnspecifiedTypeError. Returns false
+// otherwise.
+func IsUnspecifiedTypeError(err error) bool {
+	switch err.(type) {
+	case *UnspecifiedTypeError:
+		return true
+	default:
+		return false
+	}
 }
