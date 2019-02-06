@@ -160,6 +160,24 @@ func IsUnregisteredTypeError(err error) bool {
 	}
 }
 
+// UnspecifiedTypeError is returned when trying to create Storage but Type is not specified.
+type UnspecifiedTypeError struct{}
+
+func (e *UnspecifiedTypeError) Error() string {
+	return "storage Type is not specified"
+}
+
+// IsUnspecifiedTypeError returns true if an error is a UnspecifiedTypeError. Returns false
+// otherwise.
+func IsUnspecifiedTypeError(err error) bool {
+	switch err.(type) {
+	case *UnspecifiedTypeError:
+		return true
+	default:
+		return false
+	}
+}
+
 // InvalidPathError indicates that a path is invalid.
 type InvalidPathError struct {
 	Path string
@@ -223,24 +241,6 @@ func (e *TooLargeError) Error() string {
 func IsTooLargeError(err error) bool {
 	switch err.(type) {
 	case *TooLargeError:
-		return true
-	default:
-		return false
-	}
-}
-
-// UnspecifiedTypeError is returned when trying to create Storage but Type is not specified.
-type UnspecifiedTypeError struct{}
-
-func (e *UnspecifiedTypeError) Error() string {
-	return "storage Type is not specified"
-}
-
-// IsUnspecifiedTypeError returns true if an error is a UnspecifiedTypeError. Returns false
-// otherwise.
-func IsUnspecifiedTypeError(err error) bool {
-	switch err.(type) {
-	case *UnspecifiedTypeError:
 		return true
 	default:
 		return false
