@@ -9,12 +9,16 @@ import (
 	"github.com/pw1/stor/tester"
 )
 
-// Call the generic storage tests
+// TestMemoryStorageTester calls the generic storage tests
 func TestMemoryStorageTester(t *testing.T) {
-	testSuite := tester.New(MemoryStorageType)
+	myConfFactory := func() *stor.Conf {
+		return &stor.Conf{
+			Type: MemoryStorageType,
+		}
+	}
 
-	testSuite.SetupTestFunc = func(s *tester.StorageTester) stor.Storage {
-		return New()
+	testSuite := &tester.StorageTester{
+		ConfFactory: myConfFactory,
 	}
 
 	suite.Run(t, testSuite)
