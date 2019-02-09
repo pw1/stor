@@ -12,6 +12,45 @@ import (
 	"github.com/pw1/stor/tester"
 )
 
+// Call the generic storage tests
+func TestLocalDirWithStorageTester(t *testing.T) {
+	var tempDir string
+	tempDir, err := ioutil.TempDir("", "TestLocalDirGenericStorage")
+	if err != nil {
+		t.FailNow()
+	}
+	t.Logf("Temp dir for testing: %s", tempDir)
+
+	myConfFactory := func() *stor.Conf {
+		return &stor.Conf{
+			Type: LocalDirStorageType,
+			Path: tempDir,
+		}
+	}
+
+	testSuite := &tester.StorageTester{
+		ConfFactory:       myConfFactory,
+		SetupTestFunc:     func(s *tester.StorageTester) { cleanDir(t, tempDir) },
+		TearDownSuiteFunc: func(s *tester.StorageTester) { os.RemoveAll(tempDir) },
+	}
+	suite.Run(t, testSuite)
+}
+
+// cleanDir removes all files and subdirectories. But it does not remove the directory itself.
+func cleanDir(t *testing.T, dirPath string) {
+	files, err := ioutil.ReadDir(dirPath)
+	if err != nil {
+		t.Fatalf("Failed to list dir: %s", err)
+	}
+
+	for _, file := range files {
+		err = os.RemoveAll(filepath.Join(dirPath, file.Name()))
+		if err != nil {
+			t.Fatalf("Failed to cleanup dir: %s", err)
+		}
+	}
+}
+
 // Create a new directory to be used by a single test
 func makeTestDir(tempDir string) (string, error) {
 	tempDir, err := ioutil.TempDir(tempDir, "")
@@ -22,28 +61,8 @@ func makeTestDir(tempDir string) (string, error) {
 	return tempDir, nil
 }
 
-// Create a base directory (for the LocalDir storage) and the associated LocalDir object
-func makeLocalDir(tempDir string) (*LocalDir, error) {
-	testDir, err := makeTestDir(tempDir)
-	if err != nil {
-		return nil, err
-	}
-
-	baseDir := filepath.Join(testDir, "base")
-	os.Mkdir(baseDir, 0700)
-
-	stConf := stor.NewConf()
-	stConf.StorageType = LocalDirStorageType
-	stConf.Path = baseDir
-
-	localDir, err := New(stConf)
-	if err != nil {
-		return nil, err
-	}
-
-	return localDir, nil
-}
-
+// LocalDirSuite contains tests that are not in the generic tester.StorageTester suite. The tests in
+// this suite are specific for the LocalDir type.
 type LocalDirSuite struct {
 	suite.Suite
 	tempDir string
@@ -67,9 +86,10 @@ func (s *LocalDirSuite) TestNewLocalDirAbs() {
 	testDir, err := makeTestDir(s.tempDir)
 	s.Nil(err)
 
-	stConf := stor.NewConf()
-	stConf.StorageType = LocalDirStorageType
-	stConf.Path = testDir
+	stConf := &stor.Conf{
+		Type: LocalDirStorageType,
+		Path: testDir,
+	}
 
 	localDir, err := New(stConf)
 	s.Nil(err)
@@ -86,9 +106,10 @@ func (s *LocalDirSuite) TestNewLocalDirRel() {
 
 	os.Chdir(testDir)
 
-	stConf := stor.NewConf()
-	stConf.StorageType = LocalDirStorageType
-	stConf.Path = "base"
+	stConf := &stor.Conf{
+		Type: LocalDirStorageType,
+		Path: "base",
+	}
 
 	localDir, err := New(stConf)
 	s.Nil(err)
@@ -97,16 +118,17 @@ func (s *LocalDirSuite) TestNewLocalDirRel() {
 }
 
 func (s *LocalDirSuite) TestNewLocalDirNonExisting() {
-	stConf := stor.NewConf()
-	stConf.StorageType = LocalDirStorageType
-	stConf.Path = "_this_directory_doesnt_exist__"
+	stConf := &stor.Conf{
+		Type: LocalDirStorageType,
+		Path: "_this_directory_doesnt_exist__",
+	}
 
 	localDir, err := New(stConf)
 	s.NotNil(err)
 	s.Nil(localDir)
 }
 
-// Test that New() doesn't accept a file as BaseDir
+// TestNewLocalDirFileBase verifies that that New() doesn't accept a file as BaseDir
 func (s *LocalDirSuite) TestNewLocalDirFileBase() {
 	testDir, err := makeTestDir(s.tempDir)
 	s.Nil(err)
@@ -114,36 +136,12 @@ func (s *LocalDirSuite) TestNewLocalDirFileBase() {
 	myBaseFile := filepath.Join(testDir, "base")
 	ioutil.WriteFile(myBaseFile, []byte("test123"), 0600)
 
-	stConf := stor.NewConf()
-	stConf.StorageType = LocalDirStorageType
-	stConf.Path = myBaseFile
+	stConf := &stor.Conf{
+		Type: LocalDirStorageType,
+		Path: myBaseFile,
+	}
 
 	localDir, err := New(stConf)
 	s.NotNil(err)
 	s.Nil(localDir)
-}
-
-// Call the generic storage tests
-func TestLocalDirGenericStorage(t *testing.T) {
-	testSuite := tester.New(LocalDirStorageType)
-
-	var tempDir string
-
-	testSuite.SetupSuiteFunc = func(s *tester.StorageTester) {
-		var err error
-		tempDir, err = ioutil.TempDir("", "TestLocalDirGenericStorage")
-		s.Nil(err)
-	}
-
-	testSuite.TearDownSuiteFunc = func(s *tester.StorageTester) {
-		os.RemoveAll(tempDir)
-	}
-
-	testSuite.SetupTestFunc = func(s *tester.StorageTester) stor.Storage {
-		ldir, err := makeLocalDir(tempDir)
-		s.Nil(err)
-		return ldir
-	}
-
-	suite.Run(t, testSuite)
 }

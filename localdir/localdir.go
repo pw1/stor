@@ -12,15 +12,15 @@ import (
 )
 
 const (
-	// LocalDirStorageType defines the numeric representation of the LocalDir stor.Type.
-	LocalDirStorageType stor.Type = 3707851827220653854
-
-	// LocalDirStorageTypeText defines the textual representation of the LocalDir stor.Type.
-	LocalDirStorageTypeText string = "LocalDir"
+	// LocalDirStorageType is the storage type of the LocalDir storage.
+	LocalDirStorageType stor.Type = "LocalDir"
 )
 
 func init() {
-	stor.RegisterStorageType(LocalDirStorageType, LocalDirStorageTypeText)
+	newStorageFunc := func(conf *stor.Conf) (stor.Storage, error) {
+		return New(conf)
+	}
+	stor.RegisterType(LocalDirStorageType, newStorageFunc)
 }
 
 // LocalDir is a Storage object that uses a directory in the local file system as storage backend.
@@ -48,11 +48,6 @@ func New(conf *stor.Conf) (*LocalDir, error) {
 		BaseDir: absPath,
 	}
 
-	if ldir.Type() != conf.StorageType {
-		return nil, fmt.Errorf("invalid StorageType %s. I'm expecting type %s", conf.StorageType,
-			ldir.Type())
-	}
-
 	return ldir, nil
 }
 
@@ -75,13 +70,35 @@ func (l *LocalDir) getFullPath(filePath string) (string, error) {
 	// Double-check that we don't escape from the base directory
 	if escapesDir(fullPath, l.BaseDir) {
 		msg := fmt.Sprintf("invalid filePath %v, it escapes the base directory", filePath)
-		return "", stor.NewInvalidPathError(msg)
+		return "", &stor.InvalidPathError{Path: msg}
 	}
 
 	return fullPath, nil
 }
 
-// List all entries within a directory.
+// Meta returns meta information about a file.
+func (l *LocalDir) Meta(filePath string) (*stor.Meta, error) {
+	fullPath, err := l.getFullPath(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, &stor.PathDoesntExistError{Path: filePath}
+		}
+		return nil, err
+	}
+
+	meta := &stor.Meta{
+		Size: info.Size(),
+	}
+
+	return meta, nil
+}
+
+// List returns the files and subdirectories within the specified directory.
 func (l *LocalDir) List(filePath string) ([]string, []string, error) {
 	fullPath, err := l.getFullPath(filePath)
 	if err != nil {
@@ -107,25 +124,8 @@ func (l *LocalDir) List(filePath string) ([]string, []string, error) {
 	return files, dirs, nil
 }
 
-// Exist checks whether a file exists, or not.
-func (l *LocalDir) Exist(filePath string) (bool, error) {
-	fullPath, err := l.getFullPath(filePath)
-	if err != nil {
-		return false, err
-	}
-
-	_, err = os.Stat(fullPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-
-		return false, err
-	}
-	return true, nil
-}
-
-// Load the content of a file. Return an error if the file is larger than maxSize.
+// Load loads the content of the specified file. If the file is larger than maxSize, the an error is
+// returned.
 func (l *LocalDir) Load(filePath string, maxSize int64) ([]byte, error) {
 	fullPath, err := l.getFullPath(filePath)
 	if err != nil {
@@ -134,17 +134,20 @@ func (l *LocalDir) Load(filePath string, maxSize int64) ([]byte, error) {
 
 	info, err := os.Stat(fullPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return []byte{}, &stor.PathDoesntExistError{Path: filePath}
+		}
 		return []byte{}, err
 	}
 
 	if info.Size() > maxSize {
-		return []byte{}, fmt.Errorf("File is larger than %d", maxSize)
+		return []byte{}, &stor.TooLargeError{What: filePath}
 	}
 
 	return ioutil.ReadFile(fullPath)
 }
 
-// Save the content of a file.
+// Save saves the data to the specified file.
 func (l *LocalDir) Save(filePath string, data []byte) error {
 	fullPath, err := l.getFullPath(filePath)
 	if err != nil {
@@ -163,7 +166,7 @@ func (l *LocalDir) Save(filePath string, data []byte) error {
 	return nil
 }
 
-// Delete a file from stor.
+// Delete removes a file from storage.
 func (l *LocalDir) Delete(filePath string) error {
 	fullPath, err := l.getFullPath(filePath)
 	if err != nil {
@@ -172,6 +175,9 @@ func (l *LocalDir) Delete(filePath string) error {
 
 	err = os.Remove(fullPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return &stor.PathDoesntExistError{Path: filePath}
+		}
 		return err
 	}
 
@@ -200,11 +206,6 @@ func (l *LocalDir) Delete(filePath string) error {
 	return nil
 }
 
-// Type returns the Type of this Storage object.
-func (l *LocalDir) Type() stor.Type {
-	return LocalDirStorageType
-}
-
 // escapesDir checks whether a path escapes a certain baseDir directory.
 // Return true if path is not within the baseDir. Returns false if path is within the baseDir, or
 // equal to baseDir.
@@ -225,6 +226,8 @@ func escapesDir(path, baseDir string) bool {
 	return !strings.HasPrefix(pathSlash, baseDirSlash)
 }
 
+// addTrailingSeparator add a trailing separator (e.g. / on Linux and \ on Windows) to a path if
+// that path does not yet have such separator at the end.
 func addTrailingSeparator(path string) string {
 	n := len(path)
 	if (n == 0) || path[n-1] != filepath.Separator {
