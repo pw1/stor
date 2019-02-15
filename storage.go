@@ -34,14 +34,15 @@ type Loader interface {
 
 // Saver can save files in Storage.
 type Saver interface {
-	// Save data to a file.
+	// Save data to a file. If the file already exists, than Save() will overwrite that file without
+	// error.
 	// The path argument is a slash-separated path.
 	Save(path string, data []byte) error
 }
 
 // Deleter can delete files from Storage.
 type Deleter interface {
-	// Delete a file.
+	// Delete a file. If the file does not exist, then a PathDoesntExistError is returned.
 	// The path argument is a slash-separated path.
 	Delete(path string) error
 }
